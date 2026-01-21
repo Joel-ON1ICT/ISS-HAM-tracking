@@ -1,0 +1,14 @@
+# Mac systeem bestanden
+.DS_Store
+
+# Windows systeem bestanden
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Logs
+*.log
+
+# Editor instellingen (optioneel, als je VS Code of Jetbrains gebruikt)
+.vscode/
+.idea/
