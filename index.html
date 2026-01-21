@@ -1,0 +1,697 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISS HAM Control Center</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; font-family: 'Segoe UI', sans-serif; background: #000; color: #eee; }
+        #map { height: 100%; width: 100%; background: #000; z-index: 1; }
+        
+        /* Panelen */
+        .panel { position: absolute; background: rgba(0, 20, 0, 0.85); border: 1px solid #005500; padding: 10px; border-radius: 4px; backdrop-filter: blur(4px); z-index: 1000; font-size: 0.85em; box-shadow: 0 4px 15px rgba(0,0,0,0.8); }
+        .panel h3 { margin: 0 0 8px 0; color: #00ff00; font-size: 1em; text-transform: uppercase; border-bottom: 1px solid #005500; padding-bottom: 4px; display: flex; justify-content: space-between; align-items: center; }
+        .sync-time { font-size: 0.6em; color: #668866; font-weight: normal; text-transform: none; }
+        
+        /* Tabellen */
+        table { width: 100%; border-collapse: collapse; font-family: 'Courier New', monospace; }
+        th { text-align: left; color: #88aa88; font-size: 0.8em; padding-bottom: 4px; border-bottom: 1px solid #004400; }
+        td { padding: 4px 4px 4px 0; border-bottom: 1px solid #003300; vertical-align: middle; font-size: 0.9em; }
+        
+        /* Interactie */
+        #pass-list tr, #freq-list tr { transition: background 0.2s; cursor: pointer; }
+        #pass-list tr:hover, #freq-list tr:hover { background: #003300; }
+        .selected-pass { background: #004400 !important; border-left: 3px solid #00ffff; }
+        .selected-freq { background: #002244 !important; border-left: 3px solid #ff00ff; }
+
+        /* Algemene UI */
+        .header-overlay { position: absolute; top: 10px; left: 15px; z-index: 1000; background: rgba(0, 0, 0, 0.6); padding: 5px 10px; border-radius: 4px; color: white; font-weight: bold; border-left: 4px solid #00ff00; }
+        .instruction { margin-top: 5px; font-size: 0.8em; color: #00ffff; text-align: center; }
+        .disclaimer { margin-top: 5px; padding-top: 5px; border-top: 1px solid #004400; font-size: 0.65em; color: #666; text-align: center; font-style: italic; }
+
+        /* Panel Posities & Dynamische Hoogte */
+        .pass-panel { 
+            top: 55px; 
+            left: 15px; 
+            width: 280px; 
+            max-height: 80vh; 
+            overflow-y: auto; 
+            transition: max-height 0.3s ease;
+        }
+        .freq-panel { bottom: 15px; left: 15px; width: 600px; max-height: 250px; overflow-y: auto; }
+        .info-panel { top: 15px; right: 15px; width: 320px; text-align: center; }
+        .ham-panel { bottom: 15px; right: 15px; width: 230px; } 
+        
+        #status-border { position: absolute; top: 0; left: 0; right: 0; bottom: 0; border: 8px solid #333; pointer-events: none; z-index: 9999; transition: border-color 1s ease; }
+        .data-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .elevatie-badge { font-size: 1.2em; color: #ffcc00; font-weight: bold; }
+        
+        ::-webkit-scrollbar { width: 6px; } ::-webkit-scrollbar-track { background: #001100; } ::-webkit-scrollbar-thumb { background: #005500; }
+        
+        #map-notice { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.8); color: #00ffff; padding: 5px 15px; border-radius: 20px; border: 1px solid #00ffff; display: none; z-index: 2000; font-size: 0.9em; pointer-events: none; }
+
+        /* Klok & Countdown */
+        .digital-clock { font-family: 'Courier New', monospace; font-size: 2.2em; color: #fff; font-weight: bold; text-shadow: 0 0 10px rgba(255,255,255,0.2); line-height: 1; margin-top: 5px;}
+        .digital-date { font-size: 0.9em; color: #88aa88; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+        .countdown-container { margin-top: 10px; border-top: 1px solid #004400; padding-top: 8px; }
+        .countdown-label { font-size: 0.75em; color: #aaa; text-transform: uppercase; margin-bottom: 2px; }
+        .countdown-timer { font-family: 'Courier New', monospace; font-size: 1.8em; color: #00ff00; font-weight: bold; letter-spacing: 1px; }
+
+        .live-active { color: #ff3333 !important; text-shadow: 0 0 15px #ff0000; animation: pulse 1.5s infinite; }
+        .get-ready { color: #ff9900 !important; } 
+        @keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.6; } 100% { opacity: 1; } }
+
+        /* Controls */
+        .aos-select { background: #002200; color: #00ff00; border: 1px solid #005500; font-family: 'Segoe UI', sans-serif; font-size: 0.9em; padding: 2px 5px; outline: none; cursor: pointer; border-radius: 3px; width: 100px; text-align: right; }
+        .aos-select:hover { background: #003300; }
+        .test-btn { width: 100%; margin-top: 10px; text-align: center; font-weight: bold; background: #003300; }
+        .test-btn:hover { background: #005500; }
+        .test-btn:active { background: #00ff00; color: #000; }
+
+        /* Channel Display */
+        .channel-box { background: #002200; border: 2px solid #00ff00; border-radius: 5px; padding: 5px; margin: 8px 0; text-align: center; box-shadow: 0 0 10px rgba(0, 255, 0, 0.2); }
+        .channel-title { font-size: 0.7em; color: #88aa88; text-transform: uppercase; letter-spacing: 1px; display: block; margin-bottom: 2px; }
+        .channel-value { font-family: 'Courier New', monospace; font-size: 1.6em; font-weight: bold; color: #fff; text-shadow: 0 0 5px #00ff00; }
+
+        /* Taal Selector */
+        .lang-container { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 2000; background: rgba(0, 0, 0, 0.7); border: 1px solid #004400; border-radius: 20px; padding: 5px 15px; display: flex; gap: 15px; }
+        .flag-icon { width: 24px; height: 18px; cursor: pointer; opacity: 0.6; transition: opacity 0.2s, transform 0.2s; position: relative; }
+        .flag-icon:hover { opacity: 1; transform: scale(1.1); }
+        .flag-icon.active-lang { opacity: 1; box-shadow: 0 0 8px #00ff00; border-radius: 2px; }
+
+        /* Zoekbalk */
+        .search-container { position: relative; margin-bottom: 10px; }
+        .location-input { background: #002200; color: #00ff00; border: 1px solid #005500; font-family: 'Courier New', monospace; width: 100%; box-sizing: border-box; padding: 8px; text-transform: uppercase; font-weight: bold; font-size: 0.9em; }
+        .location-input:focus { border-color: #00ff00; outline: none; }
+        #search-results { position: absolute; top: 100%; left: 0; right: 0; background: #001100; border: 1px solid #005500; border-top: none; max-height: 250px; overflow-y: auto; z-index: 2000; display: none; }
+        .result-item { padding: 8px; border-bottom: 1px solid #003300; cursor: pointer; font-size: 0.85em; color: #ccc; line-height: 1.3; }
+        .result-item:hover { background: #003300; color: #fff; }
+        .result-item strong { color: #00ff00; font-size: 1.1em; display: block; }
+        .result-detail { font-size: 0.8em; color: #88aa88; }
+        
+        /* Iconen */
+        .home-icon { font-size: 26px; text-align: center; line-height: 26px; margin-top: -13px; margin-left: -13px; filter: drop-shadow(0 0 5px #00ff00); }
+        
+        /* ISS Icoon Versie 1 (Emoji) */
+        .iss-icon { font-size: 40px; text-align: center; line-height: 40px; margin-top: -20px; margin-left: -20px; filter: drop-shadow(0 0 10px #ff0000); }
+        
+        .mode-label { font-size: 0.7em; color: #ff00ff; text-align: center; margin-bottom: 5px; font-weight: bold; text-transform: uppercase; letter-spacing: 1px;}
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <div id="status-border"></div>
+    
+    <div class="lang-container">
+        <svg class="flag-icon active-lang" id="flag-nl" data-lang="nl" viewBox="0 0 30 20"><rect width="30" height="20" fill="#E3001B"/><rect y="6.66" width="30" height="6.66" fill="#FFFFFF"/><rect y="13.33" width="30" height="6.66" fill="#20398E"/></svg>
+        <svg class="flag-icon" id="flag-en" data-lang="en" viewBox="0 0 60 30"><clipPath id="t"><path d="M30,15h30v15zv15h-30zh-30v-15zv-15h30z"/></clipPath><path d="M0,0v30h60v-30z" fill="#00247d"/><path d="M0,0l60,30m0-30l-60,30" stroke="#fff" stroke-width="6"/><path d="M0,0l60,30m0-30l-60,30" clip-path="url(#t)" stroke="#cf142b" stroke-width="4"/><path d="M30,0v30m-30-15h60" stroke="#fff" stroke-width="10"/><path d="M30,0v30m-30-15h60" stroke="#cf142b" stroke-width="6"/></svg>
+        <svg class="flag-icon" id="flag-fr" data-lang="fr" viewBox="0 0 30 20"><rect width="30" height="20" fill="#ED2939"/><rect width="20" height="20" fill="#FFFFFF"/><rect width="10" height="20" fill="#002395"/></svg>
+        <svg class="flag-icon" id="flag-es" data-lang="es" viewBox="0 0 30 20"><rect width="30" height="20" fill="#AA151B"/><rect y="5" width="30" height="10" fill="#F1BF00"/></svg>
+    </div>
+
+    <div class="header-overlay" id="main-header">ISS HAM CONTROL Brussel (Belgium)</div>
+    <div id="map-notice">PASSAGE MODUS - Klik op kaart voor LIVE</div>
+
+    <div class="panel pass-panel">
+        <h3 style="display:flex; justify-content:space-between; align-items:center;">
+            <span id="txt-pass-title">Volgende Passages</span>
+            <select id="pass-count-select" class="aos-select" style="width:auto; margin-left:10px;">
+                <option value="5">5</option>
+                <option value="10">10</option>
+                <option value="15" selected>15</option>
+                <option value="20">20</option>
+            </select>
+        </h3>
+        <table id="pass-table"><thead><tr><th id="th-date">DATUM/TIJD</th><th id="th-max">MAX</th><th id="th-dur">DUUR</th></tr></thead><tbody id="pass-list"><tr><td colspan="3">Berekenen...</td></tr></tbody></table>
+    </div>
+
+    <div class="panel freq-panel">
+        <h3 id="txt-freq-title">Modus & Frequenties <span id="freq-sync" class="sync-time">Statisch</span></h3>
+        <table id="freq-table">
+            <thead>
+                <tr>
+                    <th id="th-mode">MODUS</th>
+                    <th id="th-down">DOWN</th>
+                    <th id="th-up">UP</th>
+                    <th id="th-tone">TOON</th>
+                    <th id="th-info">INFO</th>
+                </tr>
+            </thead>
+            <tbody id="freq-list"><tr><td colspan="5">Laden...</td></tr></tbody>
+        </table>
+        
+        <div id="txt-instruction" class="instruction">Klik op een modus voor specifieke Doppler correctie</div>
+        <div id="txt-disclaimer" class="disclaimer">Hobby project voor educatieve doeleinden - Data is indicatief - Niet voor operationeel gebruik</div>
+    </div>
+
+    <div class="panel info-panel">
+        <div class="search-container">
+            <input type="text" id="location-input" class="location-input" placeholder="Stad..." value="Brussel" autocomplete="off">
+            <div id="search-results"></div>
+        </div>
+
+        <h3 id="txt-local-time">Lokale Tijd</h3>
+        <div id="clock-date" class="digital-date">...</div>
+        <div id="clock-time" class="digital-clock">--:--:--</div>
+        
+        <div class="countdown-container">
+            <div class="countdown-label" id="txt-next-pass">Volgende Passage</div>
+            <div id="aos-time" style="font-family:'Courier New';font-size:1.2em;color:#ffff00;font-weight:bold;margin-bottom:2px;">--:--:--</div>
+            <div id="aos-countdown" class="countdown-timer">Berekenen...</div>
+        </div>
+    </div>
+
+    <div class="panel ham-panel">
+        <div id="active-mode-label" class="mode-label">FM VOICE REGION 1</div>
+        
+        <div class="channel-box">
+            <span id="txt-preset" class="channel-title">ZENDER PRESET</span>
+            <span id="radio-channel" class="channel-value">--</span>
+        </div>
+
+        <div class="data-row">
+            <span id="lbl-dop-dn">RX <small id="ref-dn">145.800</small>:</span> 
+            <span style="color:white; font-weight:bold;"><span id="val-dop-dn">---</span> MHz</span>
+        </div>
+        
+        <div class="data-row">
+            <span id="lbl-dop-up">TX <small id="ref-up">145.200</small>:</span> 
+            <span style="color:white; font-weight:bold;"><span id="val-dop-up">---</span> MHz</span>
+        </div>
+        
+        <div class="data-row" style="margin-top:5px;"><span>AFSTAND:</span> <span style="color:white"><span id="distance-text">---</span> km</span></div>
+        <hr style="border:0; border-top:1px solid #004400;">
+        <div class="data-row" style="align-items: center;"><span>EL:</span> <span id="cur-el" class="elevatie-badge">0.0°</span></div>
+        <div class="data-row"><span>MAX (1u):</span> <span id="max-el" style="color:white">--</span></div>
+        
+        <hr style="border:0; border-top:1px solid #004400; margin-top: 5px;">
+        <div class="data-row" style="align-items: center; margin-top: 5px;">
+            <span id="txt-aos-limit">AOS LIMIET:</span>
+            <select id="min-el-select" class="aos-select" title="Minimale Elevatie voor AOS">
+                <option value="0">0° (Hrzn)</option>
+                <option value="10">10°</option>
+                <option value="20" selected>20°</option>
+                <option value="30">30° (Stad)</option>
+                <option value="45">45° (Hoog)</option>
+                <option value="70">70°</option>
+            </select>
+        </div>
+        
+        <button id="btn-test-sound" class="aos-select test-btn" onclick="playStoreChime()">🔊 TEST ALARM</button>
+
+        <div class="data-row" style="margin-top: 10px; border-top: 1px solid #004400; padding-top: 5px; justify-content: space-between; align-items: center;">
+            <span style="font-size: 0.7em; color: #557755;">AI PILOT:</span> 
+            <a href="https://gemini.google.com" target="_blank" style="font-size: 0.7em; color: #00ff00; text-decoration: none; font-weight: bold;" title="Never tell me the odds!">GEMINI</a>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/satellite.js/4.0.0/satellite.min.js"></script>
+    <script>
+        // =========================================================================
+        // *** CONFIGURATIE STARTLOCATIE ***
+        // =========================================================================
+        const DEFAULT_LOCATION = {
+            LAT: 50.86284222805008,       // Breedtegraad (Brussel)
+            LON: 4.357974454894064,       // Lengtegraad (Brussel)
+            NAME: "Brussel",              // Naam van de stad
+            COUNTRY: "België",            // Land
+            COUNTRY_CODE: "be",           // Landcode
+            TIMEZONE: "Europe/Brussels"
+        };
+        // =========================================================================
+
+        // STANDAARD INSTELLINGEN: 20 Graden, 15 Passages
+        let CFG = { ...DEFAULT_LOCATION, MIN_EL_LIST: 20, MIN_EL_BORDER: 20, PASS_COUNT: 15 };
+
+        const savedLoc = localStorage.getItem('iss_ham_location');
+        if (savedLoc) {
+            try {
+                const parsed = JSON.parse(savedLoc);
+                CFG = { ...CFG, ...parsed };
+                document.getElementById('location-input').value = CFG.NAME;
+            } catch(e) { console.error("Fout bij laden opgeslagen locatie", e); }
+        } else {
+             document.getElementById('location-input').value = CFG.NAME;
+        }
+
+        let currentLang = 'nl'; 
+
+        const MODES = [
+            { name: "FM Voice - Region 1", down: 145.800, up: 145.200, tone: "--", infoKey: "descR1" },
+            { name: "FM Voice - Region 2&3", down: 145.800, up: 144.490, tone: "--", infoKey: "descR23" },
+            { name: "Crossband Repeater", down: 437.800, up: 145.990, tone: "67.0", infoKey: "descRep" },
+            { name: "Packet Radio (APRS)", down: 145.825, up: 145.825, tone: "--", infoKey: "descPkt" },
+            { name: "SSTV (PD120)", down: 145.800, up: 0,       tone: "--", infoKey: "descSSTV" }
+        ];
+
+        let selectedModeIndex = 2; 
+        let hasPlayedPassSound = false;
+
+        const TRANSLATIONS = {
+            nl: {
+                passTitle: "Volgende Passages", freqTitle: "Modus & Frequenties", localTime: "Lokale Tijd",
+                nextPass: "Volgende Passage", aosLimit: "AOS LIMIET:", preset: "ZENDER PRESET",
+                thDate: "DATUM/TIJD", thMax: "MAX", thDur: "DUUR",
+                thMode: "MODUS", thDown: "RX (MHz)", thUp: "TX (MHz)", thTone: "TOON", thInfo: "INFO",
+                calc: "Berekenen...", load: "Laden...", live: "NU BEZIG", check: "Check...",
+                newLoc: "Nieuwe locatie...", recalc: "Herberekenen...",
+                mapNotice: "PASSAGE MODUS - Klik op kaart voor LIVE", placeholder: "Stad...",
+                instr: "Klik op een modus voor specifieke Doppler correctie",
+                legal: "Hobby project voor educatieve doeleinden - Data is indicatief - Niet voor operationeel gebruik",
+                descR1: "EU/AF/RU", descR23: "AM/AU/ASIA", descRep: "Wereldwijd", descPkt: "1200Bd AFSK", descSSTV: "Beeld (RX)"
+            },
+            en: {
+                passTitle: "Next Passes", freqTitle: "Mode & Frequencies", localTime: "Local Time",
+                nextPass: "Next Pass", aosLimit: "AOS LIMIT:", preset: "RADIO PRESET",
+                thDate: "DATE/TIME", thMax: "MAX", thDur: "DUR",
+                thMode: "MODE", thDown: "RX (MHz)", thUp: "TX (MHz)", thTone: "TONE", thInfo: "INFO",
+                calc: "Calculating...", load: "Loading...", live: "LIVE NOW", check: "Check...",
+                newLoc: "New location...", recalc: "Recalculating...",
+                mapNotice: "PASS MODE - Click map for LIVE", placeholder: "City...",
+                instr: "Click on a mode for specific Doppler correction",
+                legal: "Hobby project for educational purposes only - Data is indicative - Not for operational use",
+                descR1: "EU/AF/RU", descR23: "AM/AU/ASIA", descRep: "Worldwide", descPkt: "1200Bd AFSK", descSSTV: "Image (RX)"
+            },
+            fr: {
+                passTitle: "Passages Suivants", freqTitle: "Mode & Fréquences", localTime: "Heure Locale",
+                nextPass: "Prochain Passage", aosLimit: "LIMITE AOS:", preset: "PRÉRÉGLAGE RADIO",
+                thDate: "DATE/HEURE", thMax: "MAX", thDur: "DURÉE",
+                thMode: "MODE", thDown: "RX (MHz)", thUp: "TX (MHz)", thTone: "TON", thInfo: "INFO",
+                calc: "Calcul...", load: "Chargement...", live: "EN DIRECT", check: "Vérifier...",
+                newLoc: "Nouvelle position...", recalc: "Recalcul...",
+                mapNotice: "MODE PASSAGE - Cliquez pour LIVE", placeholder: "Ville...",
+                instr: "Cliquez sur un mode pour la correction Doppler spécifique",
+                legal: "Projet amateur à but éducatif - Données indicatives - Pas pour usage opérationnel",
+                descR1: "EU/AF/RU", descR23: "AM/AU/ASIA", descRep: "Mondial", descPkt: "1200Bd AFSK", descSSTV: "Image (RX)"
+            },
+            es: {
+                passTitle: "Próximos Pasos", freqTitle: "Modo y Frecuencias", localTime: "Hora Local",
+                nextPass: "Siguiente Paso", aosLimit: "LÍMITE AOS:", preset: "PREAJUSTE RADIO",
+                thDate: "FECHA/HORA", thMax: "MÁX", thDur: "DUR",
+                thMode: "MODO", thDown: "RX (MHz)", thUp: "TX (MHz)", thTone: "TONO", thInfo: "INFO",
+                calc: "Calculando...", load: "Cargando...", live: "EN VIVO", check: "Comprobar...",
+                newLoc: "Nueva ubicación...", recalc: "Recalculando...",
+                mapNotice: "MODO PASO - Clic para VIVO", placeholder: "Ciudad...",
+                instr: "Haga clic en un modo para corrección Doppler específica",
+                legal: "Proyecto aficionado con fines educativos - Datos indicativos - No para uso operativo",
+                descR1: "EU/AF/RU", descR23: "AM/AU/ASIA", descRep: "Mundial", descPkt: "1200Bd AFSK", descSSTV: "Imagen (RX)"
+            }
+        };
+
+        const SPEED_OF_LIGHT = 299792.458;
+        let globalSatRec = null, passesCalculated = false;
+        let manualPathOverride = false;
+        let nextPassStart = null, nextPassEnd = null;
+
+        // --- GELUID: ORIGINEEL VERSIE 1 (2x afspelen) ---
+        function playStoreChime() {
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if (!AudioContext) return;
+                const ctx = new AudioContext();
+                const now = ctx.currentTime;
+
+                // Functie om de "chime" één keer af te spelen
+                const playSequence = (startTime) => {
+                    const osc1 = ctx.createOscillator(); const gain1 = ctx.createGain();
+                    osc1.connect(gain1); gain1.connect(ctx.destination);
+                    osc1.type = 'sine'; osc1.frequency.setValueAtTime(800, startTime);
+                    gain1.gain.setValueAtTime(0.4, startTime); gain1.gain.exponentialRampToValueAtTime(0.001, startTime + 1.5);
+                    osc1.start(startTime); osc1.stop(startTime + 1.5);
+
+                    const osc2 = ctx.createOscillator(); const gain2 = ctx.createGain();
+                    osc2.connect(gain2); gain2.connect(ctx.destination);
+                    osc2.type = 'sine'; osc2.frequency.setValueAtTime(600, startTime + 0.6);
+                    gain2.gain.setValueAtTime(0.4, startTime + 0.6); gain2.gain.exponentialRampToValueAtTime(0.001, startTime + 2.5);
+                    osc2.start(startTime + 0.6); osc2.stop(startTime + 2.5);
+                };
+
+                // Speel 1e keer nu
+                playSequence(now);
+
+                // Speel 2e keer na 3 seconden
+                playSequence(now + 3.0);
+
+            } catch(e) { console.log("Audio blocked", e); }
+        }
+
+        // --- MAP SETUP ---
+        const map = L.map('map', {zoomControl: false, attributionControl: false}).setView([CFG.LAT, CFG.LON], 4);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom: 19}).addTo(map);
+
+        // --- ICOON: TERUG NAAR VERSIE 1 (Emoji) ---
+        const issMarker = L.marker([0, 0], {
+            icon: L.divIcon({ className: 'iss-icon', html: '🛰️', iconSize: [40, 40], iconAnchor: [20, 20] })
+        }).addTo(map);
+
+        const homeMarker = L.marker([CFG.LAT, CFG.LON], {
+            icon: L.divIcon({ className: 'home-icon', html: '🏠', iconSize: [30, 30], iconAnchor: [15, 15] })
+        }).addTo(map);
+
+        const orbitLine = L.polyline([], {color: '#0f0', weight: 1.5, opacity: 0.5}).addTo(map);
+
+        // --- UI INTERACTIES ---
+        document.querySelectorAll('.flag-icon').forEach(flag => {
+            flag.addEventListener('click', function() {
+                document.querySelectorAll('.flag-icon').forEach(f => f.classList.remove('active-lang'));
+                this.classList.add('active-lang');
+                currentLang = this.getAttribute('data-lang');
+                applyLanguage();
+            });
+        });
+
+        // Update Header
+        document.getElementById('main-header').innerText = `ISS HAM CONTROL ${CFG.NAME} (${CFG.COUNTRY})`;
+
+        function applyLanguage() {
+            const T = TRANSLATIONS[currentLang];
+            document.getElementById('txt-pass-title').innerText = T.passTitle;
+            document.getElementById('txt-freq-title').innerHTML = `${T.freqTitle} <span id="freq-sync" class="sync-time"></span>`;
+            document.getElementById('txt-local-time').innerText = T.localTime;
+            document.getElementById('txt-next-pass').innerText = T.nextPass;
+            document.getElementById('txt-aos-limit').innerText = T.aosLimit;
+            document.getElementById('txt-preset').innerText = T.preset;
+            document.getElementById('map-notice').innerText = T.mapNotice;
+            document.getElementById('location-input').placeholder = T.placeholder;
+            document.getElementById('txt-instruction').innerText = T.instr;
+            document.getElementById('txt-disclaimer').innerText = T.legal;
+            document.getElementById('th-date').innerText = T.thDate;
+            document.getElementById('th-max').innerText = T.thMax;
+            document.getElementById('th-dur').innerText = T.thDur;
+            document.getElementById('th-mode').innerText = T.thMode;
+            document.getElementById('th-down').innerText = T.thDown;
+            document.getElementById('th-up').innerText = T.thUp;
+            document.getElementById('th-tone').innerText = T.thTone;
+            document.getElementById('th-info').innerText = T.thInfo;
+            loadStaticFreqs();
+            passesCalculated = false;
+            document.getElementById('aos-countdown').innerText = T.calc;
+            document.getElementById('pass-list').innerHTML = `<tr><td colspan="3">${T.recalc}</td></tr>`;
+            updateTracking(); 
+        }
+
+        const inputEl = document.getElementById('location-input');
+        const resultsEl = document.getElementById('search-results');
+        let searchTimeout = null;
+
+        inputEl.addEventListener('input', function() {
+            const query = this.value;
+            clearTimeout(searchTimeout);
+            if(query.length < 3) { resultsEl.style.display = 'none'; return; }
+            searchTimeout = setTimeout(() => {
+                fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&addressdetails=1`)
+                    .then(res => res.json()).then(data => showSuggestions(data)).catch(err => console.error(err));
+            }, 400);
+        });
+
+        function showSuggestions(data) {
+            resultsEl.innerHTML = '';
+            if(data.length === 0) { resultsEl.style.display = 'none'; return; }
+            data.forEach(item => {
+                const div = document.createElement('div');
+                div.className = 'result-item';
+                const addr = item.address || {};
+                const cityName = addr.city || addr.town || addr.village || addr.municipality || addr.hamlet || item.display_name.split(',')[0];
+                const stateName = addr.state || addr.region || addr.province || addr.county || "";
+                const countryName = addr.country || "";
+                let detailText = countryName;
+                if(stateName && stateName !== cityName) { detailText = `${stateName}, ${countryName}`; }
+                div.innerHTML = `<strong>${cityName}</strong> <span class="result-detail">${detailText}</span>`;
+                div.onclick = () => { selectLocation(item, cityName, countryName); };
+                resultsEl.appendChild(div);
+            });
+            resultsEl.style.display = 'block';
+        }
+
+        document.addEventListener('click', function(e) { if (e.target !== inputEl && e.target !== resultsEl) { resultsEl.style.display = 'none'; } });
+
+        async function selectLocation(data, cityName, countryName) {
+            const lat = parseFloat(data.lat);
+            const lon = parseFloat(data.lon);
+            const countryCode = (data.address && data.address.country_code) ? data.address.country_code.toLowerCase() : 'be';
+            
+            inputEl.value = cityName;
+            resultsEl.style.display = 'none';
+            
+            CFG.LAT = lat; CFG.LON = lon; CFG.NAME = cityName; CFG.COUNTRY = countryName; CFG.COUNTRY_CODE = countryCode;
+            document.getElementById('main-header').innerText = `ISS HAM CONTROL ${cityName} (${countryName})`;
+            
+            const saveObj = { LAT: lat, LON: lon, NAME: cityName, COUNTRY: countryName, COUNTRY_CODE: countryCode };
+            localStorage.setItem('iss_ham_location', JSON.stringify(saveObj));
+
+            homeMarker.setLatLng([lat, lon]);
+            map.flyTo([lat, lon], 4);
+
+            passesCalculated = false; nextPassStart = null; nextPassEnd = null;
+            document.getElementById('pass-list').innerHTML = `<tr><td colspan="3">${TRANSLATIONS[currentLang].newLoc}</td></tr>`;
+            document.getElementById('aos-countdown').innerText = TRANSLATIONS[currentLang].calc;
+            await updateTimezone(lat, lon);
+            
+            if(CFG.TIMEZONE) {
+                saveObj.TIMEZONE = CFG.TIMEZONE;
+                localStorage.setItem('iss_ham_location', JSON.stringify(saveObj));
+            }
+            
+            updateTracking();
+        }
+
+        async function updateTimezone(lat, lon) {
+            try {
+                const response = await fetch(`https://api.wheretheiss.at/v1/coordinates/${lat},${lon}`);
+                const data = await response.json();
+                if(data.timezone_id) { CFG.TIMEZONE = data.timezone_id; }
+            } catch (e) { console.error("Kon tijdzone niet ophalen", e); }
+        }
+
+        function getFormattedDate(dateObj) {
+            let langCode = 'nl-BE';
+            if(currentLang === 'en') langCode = 'en-GB'; if(currentLang === 'fr') langCode = 'fr-FR'; if(currentLang === 'es') langCode = 'es-ES';
+            const options = { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', timeZone: CFG.TIMEZONE };
+            let dateStr = dateObj.toLocaleDateString(langCode, options);
+            dateStr = dateStr.charAt(0).toUpperCase() + dateStr.slice(1);
+            return dateStr;
+        }
+
+        function getShortDate(dateObj) {
+            const isUS = (CFG.COUNTRY_CODE === 'us');
+            const mm = dateObj.getMonth() + 1;
+            const dd = dateObj.getDate();
+            return isUS ? `${mm}/${dd}` : `${dd}/${mm}`;
+        }
+
+        document.getElementById('min-el-select').addEventListener('change', function(e) {
+            const val = parseInt(e.target.value);
+            CFG.MIN_EL_LIST = val; CFG.MIN_EL_BORDER = val;
+            passesCalculated = false; nextPassStart = null; nextPassEnd = null;
+            document.getElementById('pass-list').innerHTML = `<tr><td colspan="3">${TRANSLATIONS[currentLang].recalc}</td></tr>`;
+            document.getElementById('aos-countdown').innerText = TRANSLATIONS[currentLang].calc;
+            updateTracking();
+        });
+
+        // NIEUW: Event listener voor aantal passages selectie
+        document.getElementById('pass-count-select').addEventListener('change', function(e) {
+            CFG.PASS_COUNT = parseInt(e.target.value);
+            passesCalculated = false; nextPassStart = null; nextPassEnd = null;
+            document.getElementById('pass-list').innerHTML = `<tr><td colspan="3">${TRANSLATIONS[currentLang].recalc}</td></tr>`;
+            updateTracking();
+        });
+
+        function loadStaticFreqs() {
+            const b = document.getElementById('freq-list');
+            b.innerHTML = '';
+            const T = TRANSLATIONS[currentLang];
+            
+            MODES.forEach((m, index) => {
+                const tr = document.createElement('tr');
+                if (index === selectedModeIndex) tr.classList.add('selected-freq');
+                
+                const desc = T[m.infoKey] || m.infoKey;
+                tr.innerHTML = `
+                    <td style="color:#fff;font-weight:bold;">${m.name}</td>
+                    <td style="color:#00ff00;">${m.down.toFixed(3)}</td>
+                    <td style="color:#ffcc00;">${m.up > 0 ? m.up.toFixed(3) : '-'}</td>
+                    <td style="color:#aaa;">${m.tone}</td>
+                    <td style="color:#ccc;font-size:0.85em;font-style:italic;">${desc}</td>
+                `;
+                
+                tr.onclick = () => {
+                    selectedModeIndex = index;
+                    loadStaticFreqs(); 
+                    updateTracking();  
+                };
+                
+                b.appendChild(tr);
+            });
+            document.getElementById('freq-sync').innerText = '';
+        }
+
+        function updateClockAndCountdown() {
+            const now = new Date();
+            const timeOptions = { hour: '2-digit', minute: '2-digit', second: '2-digit', timeZone: CFG.TIMEZONE };
+            try {
+                document.getElementById('clock-date').innerText = getFormattedDate(now);
+                document.getElementById('clock-time').innerText = now.toLocaleTimeString('nl-BE', timeOptions);
+            } catch(e) { document.getElementById('clock-time').innerText = "--:--:--"; }
+
+            const cdEl = document.getElementById('aos-countdown');
+            const timeEl = document.getElementById('aos-time');
+            const T = TRANSLATIONS[currentLang];
+
+            if (!nextPassStart || !nextPassEnd) {
+                if(cdEl.innerText !== T.calc && cdEl.innerText !== T.live) { 
+                    cdEl.innerText = T.calc; cdEl.style.color = "#aaa"; 
+                    timeEl.innerText = "--:--:--";
+                }
+                return;
+            }
+            
+            timeEl.innerText = nextPassStart.toLocaleTimeString('nl-BE', timeOptions);
+            const timeToStart = nextPassStart - now;
+            const timeToEnd = nextPassEnd - now;
+
+            if (timeToStart > 0) {
+                const hrs = Math.floor((timeToStart % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const mins = Math.floor((timeToStart % (1000 * 60 * 60)) / (1000 * 60));
+                const secs = Math.floor((timeToStart % (1000 * 60)) / 1000);
+                cdEl.innerText = "-" + (hrs < 10 ? "0" + hrs : hrs) + ":" + (mins < 10 ? "0" + mins : mins) + ":" + (secs < 10 ? "0" + secs : secs);
+                
+                if (timeToStart <= 30000) {
+                    cdEl.className = "countdown-timer get-ready";
+                    if (!hasPlayedPassSound) {
+                        playStoreChime();
+                        hasPlayedPassSound = true;
+                    }
+                } else {
+                    cdEl.className = "countdown-timer"; 
+                    cdEl.style.color = "#00ff00"; 
+                    hasPlayedPassSound = false; 
+                }
+
+            } else if (timeToEnd > 0) {
+                cdEl.innerText = T.live; cdEl.className = "countdown-timer live-active"; 
+            } else {
+                cdEl.innerText = T.check; cdEl.className = "countdown-timer"; cdEl.style.color = "#aaa"; 
+                passesCalculated = false;
+                hasPlayedPassSound = false;
+            }
+        }
+
+        map.on('click', () => {
+            if(manualPathOverride) {
+                manualPathOverride = false;
+                document.getElementById('map-notice').style.display = 'none';
+                orbitLine.setStyle({color: '#0f0', weight: 1.5, opacity: 0.5});
+                document.querySelectorAll('#pass-list tr').forEach(r => r.classList.remove('selected-pass'));
+                updateTracking(); 
+            }
+        });
+
+        function drawSpecificPass(start, end, rowElement) {
+            if(!globalSatRec) return;
+            manualPathOverride = true;
+            document.querySelectorAll('#pass-list tr').forEach(r => r.classList.remove('selected-pass'));
+            rowElement.classList.add('selected-pass');
+            document.getElementById('map-notice').style.display = 'block';
+            
+            const points = [];
+            const durationMins = (end - start) / 60000;
+            const steps = Math.ceil(durationMins * 2) + 2; 
+            for(let i=0; i<=steps; i++) {
+                const t = new Date(start.getTime() + i * 30000);
+                if (t > end) break;
+                const pv = satellite.propagate(globalSatRec, t);
+                const g = satellite.gstime(t);
+                const gd = satellite.eciToGeodetic(pv.position, g);
+                points.push([satellite.degreesLat(gd.latitude), satellite.degreesLong(gd.longitude)]);
+            }
+            orbitLine.setLatLngs(points);
+            orbitLine.setStyle({color: '#00ffff', weight: 3, opacity: 0.9});
+        }
+
+        function predictPasses(s,o){
+            const b=document.getElementById('pass-list'); b.innerHTML=''; const now=new Date(); const p=[]; let ip=false,cp={s:null,m:0,e:null};
+            for(let i=0;i<43200;i++){ 
+                const t=new Date(now.getTime()+i*60000); const pv=satellite.propagate(s,t); if(!pv.position)continue;
+                const el=satellite.radiansToDegrees(satellite.ecfToLookAngles(o,satellite.eciToEcf(pv.position,satellite.gstime(t))).elevation);
+                if(el>CFG.MIN_EL_LIST){ if(!ip){ip=true;cp.s=t;cp.m=el;} else{if(el>cp.m)cp.m=el;} }
+                else{ if(ip){ ip=false;cp.e=t; p.push(cp); cp={s:null,m:0,e:null}; if(p.length >= CFG.PASS_COUNT) break; } }
+            }
+            const T = TRANSLATIONS[currentLang];
+            if(p.length===0) { b.innerHTML=`<tr><td colspan="3">Geen ${CFG.MIN_EL_LIST}°+ pass</td></tr>`; nextPassStart = null; nextPassEnd = null; } 
+            else {
+                nextPassStart = p[0].s; nextPassEnd = p[0].e;
+                p.forEach(x=>{
+                    const tr=document.createElement('tr'); const c=x.m>60?'#0f0':'#ccc';
+                    const timeOpts = {hour:'2-digit', minute:'2-digit', timeZone: CFG.TIMEZONE};
+                    let dStr = getShortDate(x.s); 
+                    let tStr = x.s.toLocaleTimeString('nl-BE', timeOpts); 
+                    tr.innerHTML=`<td style="color:${c};font-size:0.9em;">${dStr} ${tStr}</td><td style="color:${c};font-weight:bold;">${Math.round(x.m)}°</td><td style="color:#aaa;">${Math.round((x.e-x.s)/60000)} min</td>`;
+                    tr.onclick = (e) => { e.stopPropagation(); drawSpecificPass(x.s, x.e, tr); };
+                    b.appendChild(tr);
+                });
+            }
+            passesCalculated=true;
+        }
+
+        async function updateTracking(){try{if(!globalSatRec){const r=await fetch('https://api.wheretheiss.at/v1/satellites/25544/tles');const t=await r.json();globalSatRec=satellite.twoline2satrec(t.line1,t.line2);}
+            const now=new Date();const g=satellite.gstime(now);
+            const obs={latitude:satellite.degreesToRadians(CFG.LAT),longitude:satellite.degreesToRadians(CFG.LON),height:0.05};
+            const pv=satellite.propagate(globalSatRec,now);const pe=satellite.eciToEcf(pv.position,g);const ve=satellite.eciToEcf(pv.velocity,g);
+            const la=satellite.ecfToLookAngles(obs,pe);const pg=satellite.eciToGeodetic(pv.position,g);
+            issMarker.setLatLng([satellite.degreesLat(pg.latitude),satellite.degreesLong(pg.longitude)]);
+            const rr=((pe.x-satellite.geodeticToEcf(obs).x)*ve.x+(pe.y-satellite.geodeticToEcf(obs).y)*ve.y+(pe.z-satellite.geodeticToEcf(obs).z)*ve.z)/la.rangeSat;
+            
+            const activeMode = MODES[selectedModeIndex];
+            const rangeRate = rr; 
+            const dopDn = activeMode.down * (1 - rangeRate/SPEED_OF_LIGHT);
+            document.getElementById('val-dop-dn').innerText = dopDn.toFixed(4);
+            document.getElementById('ref-dn').innerText = activeMode.down.toFixed(3);
+            
+            if (activeMode.up > 0) {
+                const dopUp = activeMode.up * (1 - rangeRate/SPEED_OF_LIGHT);
+                document.getElementById('val-dop-up').innerText = dopUp.toFixed(4);
+                document.getElementById('ref-up').innerText = activeMode.up.toFixed(3);
+            } else {
+                document.getElementById('val-dop-up').innerText = "---";
+                document.getElementById('ref-up').innerText = "---";
+            }
+            
+            document.getElementById('active-mode-label').innerText = activeMode.name;
+
+            let channelText = "--";
+            if (selectedModeIndex === 2) { 
+                const diff = dopDn - 437.800;
+                if (diff >= 0.0075) channelText = "ISS 1 (AOS)";      
+                else if (diff >= 0.0025) channelText = "ISS 2";       
+                else if (diff >= -0.0025) channelText = "ISS 3 (MID)"; 
+                else if (diff >= -0.0075) channelText = "ISS 4";      
+                else channelText = "ISS 5 (LOS)";                     
+            } else if (selectedModeIndex === 0 || selectedModeIndex === 1) {
+                channelText = "ISS 7 (VHF)";
+            }
+            document.getElementById('radio-channel').innerText = channelText;
+
+            document.getElementById('distance-text').innerText=Math.round(la.rangeSat);
+            document.getElementById('cur-el').innerText=satellite.radiansToDegrees(la.elevation).toFixed(1)+"°";
+            
+            if (!manualPathOverride) {
+                let mp=[],cs=[],mx=-90,vis=false;
+                for(let i=0;i<90;i++){const t=new Date(now.getTime()+i*60000);const p=satellite.propagate(globalSatRec,t).position;const gt=satellite.gstime(t);const gd=satellite.eciToGeodetic(p,gt);
+                    if(cs.length>0&&Math.abs(cs[cs.length-1][1]-satellite.degreesLong(gd.longitude))>100){mp.push(cs);cs=[];}cs.push([satellite.degreesLat(gd.latitude),satellite.degreesLong(gd.longitude)]);
+                    if(i<60){const e=satellite.radiansToDegrees(satellite.ecfToLookAngles(obs,satellite.eciToEcf(p,gt)).elevation);if(e>mx)mx=e;if(e>5)vis=true;}
+                }if(cs.length)mp.push(cs);orbitLine.setLatLngs(mp);
+                document.getElementById('max-el').innerText=Math.max(0,mx).toFixed(0)+"°";
+                const b=document.getElementById('status-border');
+                if(vis&&mx>=CFG.MIN_EL_BORDER){ b.style.borderColor="#2ecc71"; } else { b.style.borderColor="#222"; }
+            }
+            if(!passesCalculated&&globalSatRec)predictPasses(globalSatRec,obs);}catch(e){console.error(e);}}
+        
+        setInterval(updateTracking,3000); 
+        setInterval(updateClockAndCountdown, 1000); 
+        
+        applyLanguage(); 
+    </script>
+</body>
+</html>
